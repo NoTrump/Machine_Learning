@@ -1,0 +1,680 @@
+
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Aug 15 15:09:40 2018
+
+@author: Administrator
+"""
+
+
+import numpy as np 
+import pandas as pd
+%matplotlib inline
+import matplotlib.pyplot as plt
+import seaborn as sns
+color = sns.color_palette()
+sns.set_style('darkgrid')
+import warnings
+def ignore_warn(*args, **kwargs):
+    pass
+warnings.warn = ignore_warn
+
+
+from scipy import stats
+from scipy.stats import norm, skew
+
+pd.set_option('display.float_format', lambda x: '{:.3f}'.format(x)) #Limiting floats output
+
+
+train = pd.read_csv('D:/work_data/house_predict_data/train.csv')
+test = pd.read_csv('D:/work_data/house_predict_data/test.csv')
+train.head(5)
+
+train.info()
+train.describe()
+#拿出ID列
+train_ID = train['Id']
+test_ID = test['Id']
+#去掉ID列
+train.drop('Id', axis = 1,inplace = True)
+test.drop('Id',axis = 1, inplace = True)
+
+'''数据处理'''
+'''
+离群点处理：
+当然数据探索部分并没有结束，在数据处理部分，我们会边探索边处理：
+在数据中会有个别离群点，他们对分类结果噪音太大，我们选择将其删掉。
+但是如果不是太过分的离群点，就不能删掉，因为如果删掉所有噪声会影响模型的健壮性，
+对测试数据的泛化能力就会下降。
+'''
+#查看离群点数量和分布
+'''
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.covariance import EllipticEnvelope
+from sklearn.ensemble import IsolationForest
+plt.scatter(train['GrLivArea'],train['SalePrice'])
+plt.plot()
+
+neigh = IsolationForest().fit(train['SalePrice'].reshape(-1, 1))
+        
+y_data =  pd.Series(neigh.predict(train['SalePrice'].reshape(-1, 1)))
+warning_data = y_data[y_data == -1]
+train = train.drop(axis = 0,index = warning_data.index)
+
+plt.scatter(train['GrLivArea'],train['SalePrice'])
+plt.plot()
+'''
+# 删除离群点
+train = train.drop(train[(train['GrLivArea']>4000) & (train['SalePrice']<300000)].index)
+
+# 绘图
+fig, ax = plt.subplots()
+ax.scatter(train['GrLivArea'], train['SalePrice'])
+plt.ylabel('SalePrice', fontsize=13)
+plt.xlabel('GrLivArea', fontsize=13)
+plt.show()
+
+'''目标值处理：
+线性的模型需要正态分布的目标值才能发挥最大的作用。我们需要检测房价什么时候偏离正态分布。使用probplot函数，即正态概率图：
+'''
+sns.distplot(train['SalePrice'] , fit=norm)
+# 正态分布拟合
+(mu, sigma) = norm.fit(train['SalePrice'])
+print( '\n mu = {:.2f} and sigma = {:.2f}\n'.format(mu, sigma))
+
+# 绘图
+plt.legend(['Normal dist. ($\mu=$ {:.2f} and $\sigma=$ {:.2f} )'.format(mu, sigma)],
+            loc='best')
+plt.ylabel('Frequency')
+plt.title('SalePrice distribution')
+
+# 原始数据分布绘图
+fig = plt.figure()
+res = stats.probplot(train['SalePrice'], dist ='norm',plot=plt)
+plt.show()
+
+#数据右偏分布，需要log变换
+# 使用log1p函数完成log(1+x)变换
+train["SalePrice"] = np.log1p(train["SalePrice"])
+
+# 查看调整后的分布
+sns.distplot(train['SalePrice'] , fit=norm);
+
+# 重新拟合
+(mu, sigma) = norm.fit(train['SalePrice'])
+print( '\n mu = {:.2f} and sigma = {:.2f}\n'.format(mu, sigma))
+
+# 重新绘制正态分布
+plt.legend(['Normal dist. ($\mu=$ {:.2f} and $\sigma=$ {:.2f} )'.format(mu, sigma)],
+            loc='best')
+plt.ylabel('Frequency')
+plt.title('SalePrice distribution')
+
+# 绘制变换后的分布
+fig = plt.figure()
+res = stats.probplot(train['SalePrice'], plot=plt)
+plt.show()
+
+'''````````````````````4. 特征工程`````````````````````````````````````````'''
+
+1.为了方便处理数据，我们将训练集和测试集先进行合并
+ntrain = train.shape[0]
+ntest = test.shape[0]
+y_train = train.SalePrice.values
+all_data = pd.concat((train, test)).reset_index(drop=True)
+all_data.drop(['SalePrice'], axis=1, inplace=True)
+print("合并后数据集的size：",all_data.shape)
+
+2.缺失数据可视化
+all_data_na = (all_data.isnull().sum() / len(all_data)) * 100
+all_data_na = all_data_na.drop(all_data_na[all_data_na == 0].index).sort_values(ascending=False)[:30]
+missing_data = pd.DataFrame({'Missing Ratio' :all_data_na})
+
+f, ax = plt.subplots(figsize=(15, 12))
+plt.xticks(rotation='90')
+sns.barplot(x=all_data_na.index, y=all_data_na)
+plt.xlabel('Features', fontsize=15)
+plt.ylabel('Percent of missing values', fontsize=15)
+plt.title('Percent missing data by feature', fontsize=15)
+
+3.分析各个特征与房价的相关性，相关性的分析最好使用热力图：
+# 绘制热力图去查看特征相关性
+corrmat = train.corr()
+plt.subplots(figsize=(12,9))
+sns.heatmap(corrmat, vmax=0.9, square=True)
+
+
+#查看影响最终价格的十个变量
+k = 10 
+plt.figure(figsize=(12,9))
+cols = corrmat.nlargest(k, 'SalePrice')['SalePrice'].index
+cm = np.corrcoef(train[cols].values.T)
+sns.set(font_scale=1.25)
+hm = sns.heatmap(cm, cbar=True, annot=True, square=True, fmt='.2f', annot_kws={'size': 10}, yticklabels=cols.values, xticklabels=cols.values)
+plt.show()
+
+
+#scatterplot 绘制散点图矩阵注意：多变量作图数据中不能有空值，否则出错
+sns.set()
+cols = ['SalePrice', 'OverallQual', 'GrLivArea', 'GarageCars', 'TotalBsmtSF', 'FullBath', 'YearBuilt']
+sns.pairplot(train[cols], size = 2.5)
+
+# 查看不同月份的房子的销售量
+print(train.groupby('MoSold')['SalePrice'].count())
+sns.countplot(x='MoSold',data=train)
+
+
+all_data.drop(['PoolQC','MiscFeature','Alley'],axis = 1,inplace = True) 
+
+#def DataFrameImputer(data):
+#    numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
+#    for column in data.columns:
+#        train_x = all_data[all_data['BsmtExposure'].notnull().values].drop('BsmtExposure',axis = 1)
+#        train_x = DataFrameImputer1().fit_transform(train_x)
+#        train_x = pd.get_dummies(train_x)
+#        train_y = all_data[all_data['BsmtExposure'].notnull().values]['BsmtExposure']
+#        test_x = all_data[all_data['BsmtExposure'].isnull().values].drop('BsmtExposure',axis = 1)
+#        test_x = DataFrameImputer1().fit_transform(test_x)
+#        new_columns = [x for x in list(train_x.columns) if x not in list(test_x.columns)]
+#        for i in new_columns:
+#            test_x[i] = 0
+#        if all_data['BsmtExposure'].dtype in numerics:
+#            
+#                                    
+#            RFR = RandomForestRegressor(max_depth = 5)
+#            RFR.fit(train_x,train_y)
+#            if len(test_x > 0):
+#                column_value = RFR.predict(test_x)
+#                data['BsmtExposure'][test_x.index] = column_value
+#            
+#        else:
+#            train_x = DataFrameImputer1().fit_transform(train_x)
+#            train_x = pd.get_dummies(train_x)
+#            RFC = RandomForestClassifier(max_depth = 5)
+#            RFC.fit(train_x,train_y)
+#            if len(test_x > 0):
+#                column_value = RFC.predict(test_x)
+#                all_data['BsmtExposure'][test_x.index] = column_value
+#        return data
+for i in list(all_data.columns):
+        print( i  , len(set(all_data[i])))
+        
+all_data["FireplaceQu"] = all_data["FireplaceQu"].fillna("None")
+all_data.info()
+
+all_data["LotFrontage"] = all_data.groupby("Neighborhood")["LotFrontage"].transform(lambda x: x.fillna(x.median()))
+
+for col in ('GarageType', 'GarageFinish', 'GarageQual', 'GarageCond'):
+    all_data[col] = all_data[col].fillna('None')
+    
+for col in ('GarageYrBlt', 'GarageArea', 'GarageCars'):
+    all_data[col] = all_data[col].fillna(0)    
+
+for col in ('BsmtFinSF1', 'BsmtFinSF2', 'BsmtUnfSF','TotalBsmtSF', 'BsmtFullBath', 'BsmtHalfBath'):
+    all_data[col] = all_data[col].fillna(0)
+    
+for col in ('BsmtQual', 'BsmtCond', 'BsmtExposure', 'BsmtFinType1', 'BsmtFinType2'):
+    all_data[col] = all_data[col].fillna('None')
+    
+all_data["MasVnrType"] = all_data["MasVnrType"].fillna("None")
+all_data["MasVnrArea"] = all_data["MasVnrArea"].fillna(0)
+all_data['MSZoning'] = all_data['MSZoning'].fillna(all_data['MSZoning'].mode()[0])
+
+#对于'Utilities'这个特征，所有记录均为“AllPub”，除了一个“NoSeWa”和2个NA。 由于拥有'NoSewa'的房子在训练集中，
+#因此此特征对预测建模无助。 然后我们可以安全地删除它。
+all_data = all_data.drop(['Utilities'], axis=1)
+
+all_data["Functional"] = all_data["Functional"].fillna("Typ")
+all_data['Electrical'] = all_data['Electrical'].fillna(all_data['Electrical'].mode()[0])
+all_data['KitchenQual'] = all_data['KitchenQual'].fillna(all_data['KitchenQual'].mode()[0])
+all_data['Exterior1st'] = all_data['Exterior1st'].fillna(all_data['Exterior1st'].mode()[0])
+all_data['Exterior2nd'] = all_data['Exterior2nd'].fillna(all_data['Exterior2nd'].mode()[0])
+all_data['SaleType'] = all_data['SaleType'].fillna(all_data['SaleType'].mode()[0])
+all_data['MSSubClass'] = all_data['MSSubClass'].fillna("None")
+all_data_na = (all_data.isnull().sum() / len(all_data)) * 100
+all_data_na = all_data_na.drop(all_data_na[all_data_na == 0].index).sort_values(ascending=False)
+missing_data = pd.DataFrame({'Missing Ratio' :all_data_na})
+missing_data.head()
+
+
+5.更多的数据工程：
+1、有许多特征实际上是类别型的特征，但给出来的是数字。比如MSSubClass，是评价房子种类的一个特征，
+给出的是10-100的数字，但实际上是类别，所以我们需要将其转化为字符串类别。
+
+# MSSubClass是房子种类
+all_data['MSSubClass'] = all_data['MSSubClass'].apply(str)
+
+# 同样对OverallCond做变换
+all_data['OverallCond'] = all_data['OverallCond'].astype(str)
+
+# 年与月份
+all_data['YrSold'] = all_data['YrSold'].astype(str)
+all_data['MoSold'] = all_data['MoSold'].astype(str)
+
+from sklearn.preprocessing import LabelEncoder
+cols = ('FireplaceQu', 'BsmtQual', 'BsmtCond', 'GarageQual', 'GarageCond', 
+        'ExterQual', 'ExterCond','HeatingQC', 'KitchenQual', 'BsmtFinType1', 
+        'BsmtFinType2', 'Functional', 'BsmtExposure', 'GarageFinish', 'LandSlope',
+        'LotShape', 'Street', 'CentralAir', 'MSSubClass', 'OverallCond', 
+        'YrSold', 'MoSold')
+
+# 使用LabelEncoder做变换
+for c in cols:
+    lbl = LabelEncoder() 
+    lbl.fit(list(all_data[c].values)) 
+    all_data[c] = lbl.transform(list(all_data[c].values))
+all_data.info()
+# 查看维度        
+print('all_data的数据维度: {}'.format(all_data.shape))
+
+33333 数据变换  33333 属性塑造
+3、接下来添加一个重要的特征，因为我们实际在购买房子的时候会考虑总面积的大小，
+但是此数据集中并没有包含此数据。总面积等于地下室面积+1层面积+2层面积。
+# 添加总面积特征
+all_data['TotalSF'] = all_data['TotalBsmtSF'] + all_data['1stFlrSF'] + all_data['2ndFlrSF']
+
+4、我们对房价进行分析，不符合正态分布的我们将其log转换，使其符合正态分布。那么偏离正态分布太多的特征我们也对它进行转化：
+
+numeric_feats = all_data.dtypes[all_data.dtypes != "object"].index
+
+# 对所有数值型的特征都计算skew，计算一下偏度
+skewed_feats = all_data[numeric_feats].apply(lambda x: skew(x.dropna())).sort_values(ascending=False)
+print("\nSkew in numerical features: \n")
+skewness = pd.DataFrame({'Skew' :skewed_feats})
+skewness.head()
+
+skewness = skewness[abs(skewness) > 0.75]
+print("总共有 {} 数值型的特征做变换".format(skewness.shape[0]))
+
+from scipy.special import boxcox1p
+skewed_features = skewness.index
+lam = 0.15
+for feat in skewed_features:
+    #all_data[feat] += 1
+    all_data[feat] = boxcox1p(all_data[feat], lam)
+    
+
+all_data = pd.get_dummies(all_data)
+print(all_data.shape)
+
+
+
+
+train = all_data[:ntrain]
+test = all_data[ntrain:]
+
+5. 模型选择
+from sklearn.linear_model import ElasticNet, Lasso,  BayesianRidge, LassoLarsIC,Ridge 
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.ensemble import RandomForestRegressor,  GradientBoostingRegressor
+from sklearn.kernel_ridge import KernelRidge
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import RobustScaler
+from sklearn.base import BaseEstimator, TransformerMixin, RegressorMixin, clone
+from sklearn.model_selection import KFold, cross_val_score, train_test_split
+from sklearn.metrics import mean_squared_error
+import xgboost as xgb
+import lightgbm as lgb
+
+我们使用Sklearn的cross_val_score函数。然而这个函数没有shuffle方法，我们添加了一行代码，为了在交叉验证之前shuffle数据集。
+
+# 交叉验证函数
+n_folds = 5
+
+def rmsle_cv(model):
+    kf = KFold(n_folds, shuffle=True, random_state=42).get_n_splits(train.values)
+    rmse= np.sqrt(-cross_val_score(model, train.values, y_train, scoring="neg_mean_squared_error", cv = kf))
+    return(rmse)
+
+Score的方法为MSE，建立几个基模型：
+1、LASSO Regression :
+该模型可能对异常值非常敏感。 所以我们需要让它更加健壮。 为此，我们在pipeline上使用sklearn的Robustscaler()方法
+
+lasso = make_pipeline(RobustScaler(), Lasso(alpha =0.0005, random_state=1))
+
+2.Ridge 回归：
+param_grid = {'alpha':[0.08233,0.8223,0.8123,0.8],
+              }
+Rie = GridSearchCV(Ridge(random_state=1),param_grid,cv=5)
+Rier =  Rie.fit(train,y_train)
+Rier.best_params_
+3、Elastic Net Regression :  
+- 同样让它对异常值具有鲁棒性
+ENet = make_pipeline(RobustScaler(),ElasticNet(alpha=0.0005, l1_ratio=.9, random_state=3) )
+#检测模型状态
+plot_learning_curve(ENet,title = 'stacked_models',X=train.values,y = y_train)
+score = rmsle_cv(ENet)
+4、Kernel Ridge Regression :
+param_grid = {'kernel':['polynomial'],
+              'alpha':[0.1500,0.1045,0.123,0.0900],
+              'degree':[1.55,1.45,1.35,1.25,1.10],
+              }
+KRR = GridSearchCV(KernelRidge(coef0=2.5),param_grid,cv=3)
+KRR.fit(train,y_train)
+KRR.best_params_
+plot_learning_curve(KRR,title = 'stacked_models',X=train.values,y = y_train)
+5.神经网络
+from sklearn.neural_network import MLPRegressor 
+param_grid = {
+              'alpha':[0.0001,0.0002,0.0102,0.2],
+              
+              }
+MLP = GridSearchCV(MLPRegressor(solver = 'lbfgs',shuffle=True,early_stopping = True),param_grid,cv=3)
+
+plot_learning_curve(MLP,title = 'stacked_models',X=train.values,y = y_train)
+
+
+6、Gradient Boosting Regression :gbrt
+由于Huber loss使得它对于异常值具有鲁棒性
+GBoost = GradientBoostingRegressor(n_estimators=1500, learning_rate=0.04,
+                                   max_depth=3, max_features='sqrt',
+                                   min_samples_leaf=15, min_samples_split=10, 
+                                   loss='huber',random_state = 3)
+
+7、XGBoost :
+model_xgb = xgb.XGBRegressor(eta = 0.1,colsample_bytree=0.4603, gamma=0.1, 
+                             learning_rate=0.1, max_depth=3, 
+                             min_child_weight=1.7817, n_estimators=1000,
+                             subsample=0.5213, silent=1,
+                             random_state =7, nthread = -1)
+plot_learning_curve(model_xgb,title = 'stacked_models',X=train.values,y = y_train)
+param_grid = {
+              
+              'reg_alpha':[1e-5, 1e-2, 0.1, 1, 100]
+              }
+model_xgb = xgb.XGBRegressor(learning_rate = 0.08,min_child_weight=5,gamma=0.01,
+                                         silent=1,subsample = 0.8,colsample_bytree=0.8,
+                                          random_state =7,max_depth = 3,n_estimators=420,
+                                          reg_alpha =1e-5
+                                          )
+model_xgb = GridSearchCV(model_xgb,param_grid,cv=3,scoring='neg_mean_squared_error')
+model_xgb.fit(train,y_train)
+model_xgb.best_params_,model_xgb.best_score_
+score = rmsle_cv(model_xgb)
+print("Xgboost 得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+
+XGB看特征重要度
+xgb_model = model_xgb.fit(train,y_train)
+feature_importances = xgb_model.feature_importances_
+print('特征排序：')
+feature_names=list(train.columns)
+feature_importances = xgb_model.feature_importances_
+indices = np.argsort(feature_importances)[::-1]
+
+for index in indices:
+    print("特征 %s 重要度为 %f" %(feature_names[index], feature_importances[index]))
+
+%matplotlib inline
+import matplotlib.pyplot as plt
+plt.figure(figsize=(16,8))
+plt.title("feature importances")
+plt.bar(range(len(feature_importances)), feature_importances[indices], color='b')
+plt.xticks(range(len(feature_importances)), np.array(feature_names)[indices], color='b')
+
+
+score = rmsle_cv(lasso)
+print("\nLasso 得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+score = rmsle_cv(ENet)
+print("ElasticNet 得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+score = rmsle_cv(KRR)
+print("Kernel Ridge 得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+score = rmsle_cv(GBoost)
+print("Gradient Boosting 得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+score = rmsle_cv(model_xgb)
+print("Xgboost 得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+score = rmsle_cv(Rie)
+print("Rie 得分: {:.4f} ({:.4f})\n" .format(score.mean(), score.std()))
+score = rmsle_cv(MLP)
+print("\nMLP 得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+
+6. 模型融合
+Stacking模型融合：Average-Stacking
+我们从简单的平均基本模型的方法开始。 我们构建了一个新类来扩展scikit-learn和模型，并且还利用封装与代码重用（继承）
+
+class AveragingModels(BaseEstimator, RegressorMixin, TransformerMixin):
+    def __init__(self, models):
+        self.models = models
+        
+    # 遍历所有模型，你和数据
+    def fit(self, X, y):
+        self.models_ = [clone(x) for x in self.models]
+        
+        for model in self.models_:
+            model.fit(X, y)
+
+        return self
+    
+    # 预估，并对预估结果值做average
+    def predict(self, X):
+        predictions = np.column_stack([
+            model.predict(X) for model in self.models_
+        ])
+        return np.mean(predictions, axis=1)   
+
+平均四个模型ENet，GBoost，KRR和lasso。利用上面重写的方法，我们可以轻松地添加更多的模型：
+averaged_models = AveragingModels(models = (ENet, GBoost, KRR, lasso,model_xgb))
+plot_learning_curve(averaged_models,title = 'stacked_models',X=train.values,y = y_train)
+score = rmsle_cv(averaged_models)
+print(" 对基模型集成后的得分: {:.4f} ({:.4f})\n".format(score.mean(), score.std()))
+
+Meta-model Stacking：
+在这种方法中，我们在平均基础模型上添加Meta-model，并使用这些基模型的out-of-folds预测来训练我们的Meta-model。
+训练部分的步骤如下：
+1、将整个训练集分解成两个不相交的集合（这里是train和.holdout）。
+2、在第一部分（train）上训练几个基本模型。
+3、在第二个部分（holdout）上测试这些基本模型。
+4、使用(3)中的预测（称为 out-of-fold 预测）作为输入，并将正确的标签（目标变量）作为输出来训练更高层次的学习模型称为元模型。
+前三个步骤是迭代完成的。例如，如果我们采取5倍的fold，我们首先将训练数据分成5次。然后我们会做5次迭代。在每次迭代中，我们训练每个基础模型4倍，并预测剩余的fold（holdout fold）。
+
+class StackingAveragedModels(BaseEstimator, RegressorMixin, TransformerMixin):
+    def __init__(self, base_models, meta_model, n_folds=5):
+        self.base_models = base_models
+        self.meta_model = meta_model
+        self.n_folds = n_folds
+   
+    # 遍历拟合原始模型
+    def fit(self, X, y):
+        self.base_models_ = [list() for x in self.base_models]
+        self.meta_model_ = clone(self.meta_model)
+        kfold = KFold(n_splits=self.n_folds, shuffle=True, random_state=156)
+        
+        # 得到基模型，并用基模型对out_of_fold做预估，为学习stacking的第2层做数据准备
+        out_of_fold_predictions = np.zeros((X.shape[0], len(self.base_models)))
+        for i, model in enumerate(self.base_models):
+            for train_index, holdout_index in kfold.split(X, y):
+                instance = clone(model)
+                self.base_models_[i].append(instance)
+                instance.fit(X[train_index], y[train_index])
+                y_pred = instance.predict(X[holdout_index])
+                out_of_fold_predictions[holdout_index, i] = y_pred
+                
+        # 学习stacking模型
+        self.meta_model_.fit(out_of_fold_predictions, y)
+        return self
+   
+    # 做stacking预估
+    def predict(self, X):
+        meta_features = np.column_stack([
+            np.column_stack([model.predict(X) for model in base_models]).mean(axis=1)
+            for base_models in self.base_models_ ])
+        return self.meta_model_.predict(meta_features)
+
+测试Meta-model Stacking结果：
+
+stacked_averaged_models = StackingAveragedModels(base_models = (ENet, GBoost,KRR),
+                                                 meta_model = lasso)
+
+score = rmsle_cv(stacked_averaged_models)
+print("Stacking Averaged models score: {:.4f} ({:.4f})".format(score.mean(), score.std()))
+
+
+学习曲线绘制：
+from sklearn.model_selection import learning_curve
+from sklearn.model_selection import ShuffleSplit
+def plot_learning_curve(estimator, title, X, y, ylim=None, cv=None,
+                        n_jobs=1, train_sizes=np.linspace(.1, 1.0, 5)):
+    """
+    Generate a simple plot of the test and training learning curve.
+
+    Parameters
+    ----------
+    estimator : object type that implements the "fit" and "predict" methods
+        An object of that type which is cloned for each validation.
+
+    title : string
+        Title for the chart.
+
+    X : array-like, shape (n_samples, n_features)
+        Training vector, where n_samples is the number of samples and
+        n_features is the number of features.
+
+    y : array-like, shape (n_samples) or (n_samples, n_features), optional
+        Target relative to X for classification or regression;
+        None for unsupervised learning.
+
+    ylim : tuple, shape (ymin, ymax), optional
+        Defines minimum and maximum yvalues plotted.
+
+    cv : int, cross-validation generator or an iterable, optional
+        Determines the cross-validation splitting strategy.
+        Possible inputs for cv are:
+          - None, to use the default 3-fold cross-validation,
+          - integer, to specify the number of folds.
+          - An object to be used as a cross-validation generator.
+          - An iterable yielding train/test splits.
+
+        For integer/None inputs, if ``y`` is binary or multiclass,
+        :class:`StratifiedKFold` used. If the estimator is not a classifier
+        or if ``y`` is neither binary nor multiclass, :class:`KFold` is used.
+
+        Refer :ref:`User Guide <cross_validation>` for the various
+        cross-validators that can be used here.
+
+    n_jobs : integer, optional
+        Number of jobs to run in parallel (default 1).
+
+    train_sizes : array-like, shape (n_ticks,), dtype float or int
+        Relative or absolute numbers of training examples that will be used to
+        generate the learning curve. If the dtype is float, it is regarded as a
+        fraction of the maximum size of the training set (that is determined
+        by the selected validation method), i.e. it has to be within (0, 1].
+        Otherwise it is interpreted as absolute sizes of the training sets.
+        Note that for classification the number of samples usually have to
+        be big enough to contain at least one sample from each class.
+        (default: np.linspace(0.1, 1.0, 5))
+    """
+    plt.figure()
+    plt.title(title)
+    if ylim is not None:
+        plt.ylim(*ylim)
+    plt.xlabel("Training examples")
+    plt.ylabel("Score")
+    train_sizes, train_scores, test_scores = learning_curve(
+        estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes)
+    train_scores_mean = np.mean(train_scores, axis=1)
+    train_scores_std = np.std(train_scores, axis=1)
+    test_scores_mean = np.mean(test_scores, axis=1)
+    test_scores_std = np.std(test_scores, axis=1)
+    plt.grid()
+
+    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
+                     train_scores_mean + train_scores_std, alpha=0.1,
+                     color="r")
+    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
+                     test_scores_mean + test_scores_std, alpha=0.1, color="g")
+    plt.plot(train_sizes, train_scores_mean, 'o-', color="r",
+             label="Training score")
+    plt.plot(train_sizes, test_scores_mean, 'o-', color="g",
+             label="Cross-validation score")
+
+    plt.legend(loc="best")
+    return plt
+
+plot_learning_curve(stacked_averaged_models,title = 'stacked_models',X=train.values,y = y_train)
+
+
+
+
+
+最终的训练和预测：
+def rmsle(y, y_pred):
+    return np.sqrt(mean_squared_error(y, y_pred))
+
+#StackedRegressor:
+stacked_averaged_models.fit(train.values, y_train)
+stacked_train_pred = stacked_averaged_models.predict(train.values)
+stacked_pred = np.expm1(stacked_averaged_models.predict(test.values))
+sns.distplot(stacked_pred , fit=norm)
+print(rmsle(y_train, stacked_train_pred))
+
+#XGBoost:
+model_xgb.fit(train, y_train)
+xgb_train_pred = model_xgb.predict(train)
+xgb_pred = np.expm1(model_xgb.predict(test))
+print(rmsle(y_train, xgb_train_pred))
+
+
+#voting
+averaged_models.fit(train, y_train)
+averaged_models_train_pred = averaged_models.predict(train)
+averaged_models_pred = np.expm1(averaged_models.predict(test))
+print(rmsle(y_train, averaged_models_train_pred))
+
+#lasso
+lasso.fit(train, y_train)
+lasso_train_pred = lasso.predict(train)
+lasso_pred = np.expm1(lasso.predict(test))
+print(rmsle(y_train, lasso_train_pred))
+
+
+#Gboost
+GBoost.fit(train, y_train)
+GBoost_train_pred = GBoost.predict(train)
+GBoost_pred = np.expm1(GBoost.predict(test))
+print(rmsle(y_train, GBoost_train_pred))
+
+'''RMSE on the entire Train data when averaging'''
+
+print('训练集上的RMSLE得分:')
+print(rmsle(y_train,stacked_train_pred*0.15 +xgb_train_pred*0.7  + averaged_models_train_pred*0.15))
+
+
+ensemble =stacked_pred*0.2 +xgb_pred*0.1  + averaged_models_pred*0.7
+
+ensemble_xgb = xgb_pred
+ensemble_stack = stacked_pred
+ensemble_averaged = averaged_models_pred
+
+
+plot_learning_curve(stacked_averaged_models,title = 'stacked_models',X=train.values,y = y_train)
+plot_learning_curve(averaged_models,title = 'stacked_models',X=train.values,y = y_train)
+plot_learning_curve(GBoost,title = 'stacked_models',X=train.values,y = y_train)
+plot_learning_curve(model_xgb,title = 'stacked_models',X=train.values,y = y_train)
+
+
+sub = pd.DataFrame()
+sub['Id'] = test_ID
+sub['SalePrice'] = ensemble
+sub.to_csv('D:/work_data/house_predict_data/SubMission.csv',index=False)
+
+
+sub_xgb = pd.DataFrame()
+sub_xgb['Id'] = test_ID
+sub_xgb['SalePrice'] = ensemble_xgb
+sub_xgb.to_csv('D:/work_data/house_predict_data/xgb_SubMission.csv',index=False)
+
+
+sub_stack= pd.DataFrame()
+sub_stack['Id'] = test_ID
+sub_stack['SalePrice'] = ensemble_stack
+sub_stack.to_csv('D:/work_data/house_predict_data/stack_SubMission.csv',index=False)
+
+#效果最好
+sub_averaged= pd.DataFrame()
+sub_averaged['Id'] = test_ID
+sub_averaged['SalePrice'] = ensemble_averaged
+sub_averaged.to_csv('D:/work_data/house_predict_data/averaged_SubMission.csv',index=False)
+
+
+
